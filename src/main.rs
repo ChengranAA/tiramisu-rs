@@ -1,6 +1,5 @@
-use ndarray::{Array, Array3, Array4, ArrayD, ArrayView3, ArrayViewMut4, Ix3, s};
+use ndarray::{Array, Array3, Array4, ArrayView3, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
-use nifti::{IntoNdArray, NiftiObject, ReaderOptions, volume};
 use std::string::String;
 use tensorflow::{
     self as tf, DataType, Graph, Scope, Session, SessionOptions, SessionRunArgs, Shape, Tensor,
