@@ -1,47 +1,44 @@
 use ndarray::{Array, Array3, Array4, ArrayView3, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
-use std::string::String;
+use std::{path::Path, string::String};
 use tensorflow::{
     self as tf, DataType, Graph, Scope, Session, SessionOptions, SessionRunArgs, Shape, Tensor,
 };
 mod postpro;
 mod prepro;
 mod utils;
-use utils::squeeze;
-
-fn func_stnd_ima(ary_ima: &Array3<f32>) -> Array3<f32> {
-    // Convert to f32 (like astype(dtype))
-    let data: Array3<f32> = ary_ima.map(|&v| v.into());
-
-    // Compute mean manually (no extra crates)
-    let n = data.len() as f32;
-    let sum: f32 = data.iter().sum();
-    let mean = if n > 0.0 { sum / n } else { 0.0 };
-
-    // Compute standard deviation
-    let var_sum: f32 = data
-        .iter()
-        .map(|v| {
-            let diff = *v - mean;
-            diff * diff
-        })
-        .sum();
-    let variance = if n > 0.0 { var_sum / n } else { 0.0 };
-    let std = variance.sqrt();
-
-    // Standardize: (x - mean) / std
-    if std > 0.0 {
-        data.map(|x| (x - mean) / std)
-    } else {
-        eprintln!("Standard deviation was less/equal zero");
-        Array::zeros(data.raw_dim())
-    }
-}
+use clap::{Arg, ArgMatches, Command};
+use utils::{func_stnd_ima, squeeze};
 
 // const MODEL_INP_NAME: String = String::from("inp");
 // const MODEL_OUT_NAME: String = String::from("out");
 
+fn interface() -> ArgMatches {
+    let matches = Command::new("tiramisu")
+        .about("An Implementation of the Tiramisu Anatomical Segmentation Inference Utility")
+        .version("0.0.1")
+        .arg(
+            Arg::new("input")
+                .long("input")
+                .short('i')
+                .value_name("INPUT_PATH")
+                .help("Sets input nifti file")
+                .required(true)
+                .value_parser(clap::value_parser!(String)),
+        )
+        .get_matches();
+    matches
+}
+
 fn main() {
+    let arg_matches: ArgMatches = interface();
+    let nifti_path_str: &str = arg_matches
+        .get_one::<String>("input")
+        .expect("input file path is required")
+        .as_str();
+
+    let input_nifti_path = Path::new(&nifti_path_str).to_owned();
+
     const VAR_OUT_CHN: usize = 8;
     const VAR_INP_CHN: usize = 1;
 
@@ -51,8 +48,14 @@ fn main() {
     let (px, py, pz) = tpl_inp_shp;
     let (sx, sy, sz) = tpl_strides;
 
-    let nifti_file_path = String::from("test-data/S02_UNI_reframed.nii.gz");
-    let volume: Array3<f32> = prepro::load_nifti_3d(&nifti_file_path).unwrap();
+    let volume: Array3<f32> = prepro::load_nifti_3d(input_nifti_path.to_str().unwrap()).unwrap();
+    let (nx, ny, nz) = volume.dim();
+
+    // Get Patches
+    let nx_patches = (nx - px) / sx + 1;
+    let ny_patches = (ny - py) / sy + 1;
+    let nz_patches = (nz - pz) / sz + 1;
+    let num_patches = nx_patches * ny_patches * nz_patches;
 
     println!(
         "Input Nifti 3D Volume file has the shape {:?}",
@@ -60,7 +63,6 @@ fn main() {
     );
 
     let ary_data_x: Array3<f32> = func_stnd_ima(&volume);
-    let (nx, ny, nz) = ary_data_x.dim();
 
     // Expand dimension to 1, x, y, z, 1
     let ary_data_x_expanded = ary_data_x.insert_axis(ndarray::Axis(0));
@@ -71,12 +73,6 @@ fn main() {
 
     let input_tensor = Tensor::from(ary_data_x_expanded); // Note:  here there is a dependency issue with ndarray between nifti-rs and tensorflow-rs
 
-    // Get Patches
-    let nx_patches = (nx - px) / sx + 1;
-    let ny_patches = (ny - py) / sy + 1;
-    let nz_patches = (nz - pz) / sz + 1;
-    let num_patches = nx_patches * ny_patches * nz_patches;
-
     // build a graph for extract_volume_patches
     let mut scope = Scope::new_root_scope();
 
@@ -85,6 +81,7 @@ fn main() {
         .shape(Shape::from(input_tensor.shape()))
         .build(&mut scope.with_op_name("input_volume"))
         .unwrap();
+
     let ksizes = vec![1_i64, px as i64, py as i64, pz as i64, 1_i64];
     let strides = vec![1_i64, sx as i64, sy as i64, sz as i64, 1_i64];
 
@@ -116,9 +113,9 @@ fn main() {
     //    .to_shape((num_patches, flat_patch_len, 1))
     //    .unwrap();
     let patches_array = Array::from(patches_tensor);
-    println!("{:?}", patches_array.shape());
+    // println!("{:?}", patches_array.shape());
     let patches_array = squeeze(patches_array.view()).to_owned();
-    println!("{:?}", patches_array.shape());
+    // println!("{:?}", patches_array.shape());
 
     // We’ll keep a view-by-index function: (ix,iy,iz) -> ArrayView3<f32> (px,py,pz)
     let patches_flat = patches_array.into_raw_vec(); // back to a Vec<f32> we can index
@@ -138,7 +135,7 @@ fn main() {
 
     // load model
     let mut model_graph = Graph::new();
-    let model_dir = String::from("./model/tf_model_infer");
+    let model_dir = String::from("./model/tf_model");
     let bundle = tf::SavedModelBundle::load(
         &SessionOptions::new(),
         &["serve"],
@@ -208,13 +205,13 @@ fn main() {
         }
     }
 
-    WriterOptions::new("./output/ary_out.nii.gz")
-        .write_nifti(&ary_out)
-        .unwrap();
-
-    WriterOptions::new("./output/ary_counter.nii.gz")
-        .write_nifti(&ary_counter)
-        .unwrap();
+    //WriterOptions::new("./output/ary_out.nii.gz")
+    //    .write_nifti(&ary_out)
+    //    .unwrap();
+    //
+    //WriterOptions::new("./output/ary_counter.nii.gz")
+    //    .write_nifti(&ary_counter)
+    //    .unwrap();
 
     let (ary_mean_prob_norm, ary_pred, ary_prob) = postpro::postprocess(ary_out, ary_counter);
 

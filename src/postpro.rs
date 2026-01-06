@@ -19,8 +19,8 @@ pub fn postprocess(
     // --- ary_pred = argmax(ary_mean_prob, axis=-1)
     // --- ary_prob = max(ary_mean_prob, axis=-1) / sum(ary_mean_prob, axis=-1) ---
 
-    let mut ary_pred = Array3::<f32>::zeros((nx, ny, nz)); // class indices
-    let mut ary_prob = Array3::<f32>::zeros((nx, ny, nz)); // normalized prob
+    let mut ary_pred = Array3::<f32>::zeros((nx, ny, nz));
+    let mut ary_prob = Array3::<f32>::zeros((nx, ny, nz));
 
     for x in 0..nx {
         for y in 0..ny {
