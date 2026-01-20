@@ -1,13 +1,13 @@
 use ndarray::{Array, Array3, Array4, ArrayView3, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
-use std::{path::Path, string::String};
+use std::{fs::DirBuilder, path::Path, string::String};
 use tensorflow::{
     self as tf, DataType, Graph, Scope, Session, SessionOptions, SessionRunArgs, Shape, Tensor,
 };
 mod postpro;
 mod prepro;
 mod utils;
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, builder};
 use utils::{func_stnd_ima, squeeze};
 
 // const MODEL_INP_NAME: String = String::from("inp");
@@ -24,6 +24,15 @@ fn interface() -> ArgMatches {
                 .value_name("INPUT_PATH")
                 .help("Sets input nifti file")
                 .required(true)
+                .value_parser(clap::value_parser!(String)),
+        )
+        .arg(
+            Arg::new("mode")
+                .long("mode")
+                .short('m')
+                .default_value("fast")
+                .value_name("RUN_MODE")
+                .help("Sets model running mode")
                 .value_parser(clap::value_parser!(String)),
         )
         .get_matches();
@@ -212,6 +221,12 @@ fn main() {
     //WriterOptions::new("./output/ary_counter.nii.gz")
     //    .write_nifti(&ary_counter)
     //    .unwrap();
+
+    // Create a directory if not exit else skip
+    match DirBuilder::new().create("./output") {
+        Ok(()) => println!("LOG: output folder does not exist, create the folder now."),
+        Err(_e) => println!("LOG: output folder already exist, skip creation. "),
+    }
 
     let (ary_mean_prob_norm, ary_pred, ary_prob) = postpro::postprocess(ary_out, ary_counter);
 
