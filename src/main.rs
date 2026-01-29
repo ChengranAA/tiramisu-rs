@@ -18,6 +18,8 @@ use utils::{func_stnd_ima, squeeze};
 // const MODEL_OUT_NAME: String = String::from("out");
 
 const MP2RAGE_MODEL: &str = "./model/tf_model_mp2rage";
+const VAR_OUT_CHN: usize = 8;
+const TPL_INP_SHP: (usize, usize, usize) = (64, 64, 64);
 
 // BUG: REGION MISSES IN FAST MODE
 
@@ -57,18 +59,14 @@ fn main() {
 
     let input_nifti_path = Path::new(&nifti_path_str).to_owned();
 
-    const VAR_OUT_CHN: usize = 8;
-
     let tpl_strides: (usize, usize, usize) = match run_mode {
         "fast" => (64, 64, 32),
         "slow" => (32, 32, 16),
         _ => (32, 32, 16), // default to slow mode
     };
 
-    const TPL_INP_SHP: (usize, usize, usize) = (64, 64, 64);
-
-    let (px, py, pz) = TPL_INP_SHP;
     let (sx, sy, sz) = tpl_strides;
+    let (px, py, pz) = TPL_INP_SHP;
 
     let volume: Array3<f32> = prepro::load_nifti_3d(input_nifti_path.to_str().unwrap()).unwrap();
     let (nx, ny, nz) = volume.dim();
@@ -87,10 +85,12 @@ fn main() {
     let ary_data_x: Array3<f32> = func_stnd_ima(&volume);
 
     // Expand dimension to 1, x, y, z, 1
-    let ary_data_x_expanded = ary_data_x.insert_axis(ndarray::Axis(0));
-    let ary_data_x_expanded = ary_data_x_expanded.insert_axis(ndarray::Axis(4));
-
-    let ary_data_x_expanded = ary_data_x_expanded.as_standard_layout().into_owned();
+    let ary_data_x_expanded = ary_data_x
+        .clone()
+        .insert_axis(ndarray::Axis(0))
+        .insert_axis(ndarray::Axis(4))
+        .as_standard_layout()
+        .into_owned();
     assert!(ary_data_x_expanded.is_standard_layout());
 
     let input_tensor = Tensor::from(ary_data_x_expanded); //  Note: here there is a dependency issue with ndarray between nifti-rs and tensorflow-rs
@@ -242,10 +242,8 @@ fn main() {
     }
 
     let (ary_mean_prob_norm, ary_pred, ary_prob) = postpro::postprocess(ary_out, ary_counter);
-    let ary_data_x: Array3<f32> = func_stnd_ima(&volume);
 
     // save results
-
     File::create("./output/data.nii.gz").unwrap();
     WriterOptions::new("./output/data.nii.gz")
         .write_nifti(&ary_data_x)
