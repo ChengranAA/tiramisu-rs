@@ -9,7 +9,7 @@ pub fn postprocess(
     // --- ary_mean_prob = ary_out / ary_counter[:,:,:,None] ---
     // Broadcast counter to shape (nx, ny, nz, 1)
     let ary_counter_b = ary_counter.insert_axis(Axis(3)); // (nx, ny, nz, 1)
-    let ary_mean_prob = &ary_out / &ary_counter_b; // broadcasting
+    let ary_mean_prob = &ary_out / &ary_counter_b;
 
     // --- ary_mean_prob_norm = ary_mean_prob / sum(ary_mean_prob, axis=-1)[:, :, :, None] ---
     let sum_over_channels = ary_mean_prob.sum_axis(Axis(3)); // (nx, ny, nz)

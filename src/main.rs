@@ -1,6 +1,10 @@
 use ndarray::{Array, Array3, Array4, ArrayView3, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
-use std::{fs::DirBuilder, path::Path, string::String};
+use std::{
+    fs::{DirBuilder, File},
+    path::Path,
+    string::String,
+};
 use tensorflow::{
     self as tf, DataType, Graph, Scope, Session, SessionOptions, SessionRunArgs, Shape, Tensor,
 };
@@ -12,6 +16,10 @@ use utils::{func_stnd_ima, squeeze};
 
 // const MODEL_INP_NAME: String = String::from("inp");
 // const MODEL_OUT_NAME: String = String::from("out");
+
+const MP2RAGE_MODEL: &str = "./model/tf_model_mp2rage";
+
+// BUG: REGION MISSES IN FAST MODE
 
 fn interface() -> ArgMatches {
     let matches = Command::new("tiramisu")
@@ -50,19 +58,16 @@ fn main() {
     let input_nifti_path = Path::new(&nifti_path_str).to_owned();
 
     const VAR_OUT_CHN: usize = 8;
-    // const VAR_INP_CHN: usize = 1;
 
-    let mut tpl_strides: (usize, usize, usize) = (32, 32, 16);
+    let tpl_strides: (usize, usize, usize) = match run_mode {
+        "fast" => (64, 64, 32),
+        "slow" => (32, 32, 16),
+        _ => (32, 32, 16), // default to slow mode
+    };
 
-    match run_mode {
-        "fast" => tpl_strides = (64, 64, 32),
-        "slow" => {}
-        _ => panic!("INVALID mode"),
-    }
+    const TPL_INP_SHP: (usize, usize, usize) = (64, 64, 64);
 
-    let tpl_inp_shp: (usize, usize, usize) = (64, 64, 64);
-
-    let (px, py, pz) = tpl_inp_shp;
+    let (px, py, pz) = TPL_INP_SHP;
     let (sx, sy, sz) = tpl_strides;
 
     let volume: Array3<f32> = prepro::load_nifti_3d(input_nifti_path.to_str().unwrap()).unwrap();
@@ -88,7 +93,7 @@ fn main() {
     let ary_data_x_expanded = ary_data_x_expanded.as_standard_layout().into_owned();
     assert!(ary_data_x_expanded.is_standard_layout());
 
-    let input_tensor = Tensor::from(ary_data_x_expanded); // Note:  here there is a dependency issue with ndarray between nifti-rs and tensorflow-rs
+    let input_tensor = Tensor::from(ary_data_x_expanded); //  Note: here there is a dependency issue with ndarray between nifti-rs and tensorflow-rs
 
     // build a graph for extract_volume_patches
     let mut scope = Scope::new_root_scope();
@@ -152,7 +157,7 @@ fn main() {
 
     // load model
     let mut model_graph = Graph::new();
-    let model_dir = String::from("./model/tf_model");
+    let model_dir = String::from(MP2RAGE_MODEL);
     let bundle = tf::SavedModelBundle::load(
         &SessionOptions::new(),
         &["serve"],
@@ -237,21 +242,26 @@ fn main() {
     }
 
     let (ary_mean_prob_norm, ary_pred, ary_prob) = postpro::postprocess(ary_out, ary_counter);
+    let ary_data_x: Array3<f32> = func_stnd_ima(&volume);
 
     // save results
-    let ary_data_x: Array3<f32> = func_stnd_ima(&volume);
+
+    File::create("./output/data.nii.gz").unwrap();
     WriterOptions::new("./output/data.nii.gz")
         .write_nifti(&ary_data_x)
         .unwrap();
 
+    File::create("./output/pred.nii.gz").unwrap();
     WriterOptions::new("./output/pred.nii.gz")
         .write_nifti(&ary_pred)
         .unwrap();
 
+    File::create("./output/prob.nii.gz").unwrap();
     WriterOptions::new("./output/prob.nii.gz")
         .write_nifti(&ary_prob)
         .unwrap();
 
+    File::create("./output/pred_per_class.nii.gz").unwrap();
     WriterOptions::new("./output/pred_per_class.nii.gz")
         .write_nifti(&ary_mean_prob_norm)
         .unwrap();
