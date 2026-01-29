@@ -7,7 +7,7 @@ use tensorflow::{
 mod postpro;
 mod prepro;
 mod utils;
-use clap::{Arg, ArgMatches, Command, builder};
+use clap::{Arg, ArgMatches, Command};
 use utils::{func_stnd_ima, squeeze};
 
 // const MODEL_INP_NAME: String = String::from("inp");
@@ -30,7 +30,7 @@ fn interface() -> ArgMatches {
             Arg::new("mode")
                 .long("mode")
                 .short('m')
-                .default_value("fast")
+                .default_value("slow")
                 .value_name("RUN_MODE")
                 .help("Sets model running mode")
                 .value_parser(clap::value_parser!(String)),
@@ -41,6 +41,7 @@ fn interface() -> ArgMatches {
 
 fn main() {
     let arg_matches: ArgMatches = interface();
+    let run_mode: &str = arg_matches.get_one::<String>("mode").expect("").as_str();
     let nifti_path_str: &str = arg_matches
         .get_one::<String>("input")
         .expect("input file path is required")
@@ -49,9 +50,16 @@ fn main() {
     let input_nifti_path = Path::new(&nifti_path_str).to_owned();
 
     const VAR_OUT_CHN: usize = 8;
-    const VAR_INP_CHN: usize = 1;
+    // const VAR_INP_CHN: usize = 1;
 
-    let tpl_strides: (usize, usize, usize) = (32, 32, 16);
+    let mut tpl_strides: (usize, usize, usize) = (32, 32, 16);
+
+    match run_mode {
+        "fast" => tpl_strides = (64, 64, 32),
+        "slow" => {}
+        _ => panic!("INVALID mode"),
+    }
+
     let tpl_inp_shp: (usize, usize, usize) = (64, 64, 64);
 
     let (px, py, pz) = tpl_inp_shp;
