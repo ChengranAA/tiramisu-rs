@@ -25,9 +25,8 @@ pub fn squeeze<A>(view: ArrayViewD<'_, A>) -> ArrayViewD<'_, A> {
 
 pub fn func_stnd_ima(ary_ima: &Array3<f32>) -> Array3<f32> {
     // Convert to f32 (like astype(dtype))
-    let data: Array3<f32> = ary_ima.map(|&v| v.into());
-
-    // let n = data.len() as f32;
+    // let data: Array3<f32> = ary_ima.map(|&v| v.into());
+    let data: Array3<f32> = ary_ima.clone();
     let mean = data.mean().unwrap();
     let std = data.std(0.0);
 
@@ -58,7 +57,6 @@ pub fn postprocess(
 
     // --- ary_pred = argmax(ary_mean_prob, axis=-1)
     // --- ary_prob = max(ary_mean_prob, axis=-1) / sum(ary_mean_prob, axis=-1) ---
-
     let mut ary_pred = Array3::<i32>::zeros((nx, ny, nz));
     let mut ary_prob = Array3::<f32>::zeros((nx, ny, nz));
 
