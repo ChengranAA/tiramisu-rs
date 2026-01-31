@@ -4,7 +4,7 @@ A Rust implementation of Tiramisu Model for segmentation of MPRAGE and MP2RAGE a
 
 ## Status
 - [x] MP2RAGE Slow mode segmentation 
-- [x] MP2RAGE Fast mode segmentation: WIP, missing regions
+- [x] MP2RAGE Fast mode segmentation
 - [x] MPRAGE Slow model segmentation 
 - [x] MPRAGE Fase mode segmentation 
 
