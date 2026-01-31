@@ -1,23 +1,24 @@
-use ndarray::{Array, Array3, Array4, ArrayView3, ArrayViewMut4, s};
+use ndarray::{Array, Array3, Array4, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
 use std::{
+    f32,
     fs::{DirBuilder, File},
     path::Path,
     string::String,
+    time::Instant,
 };
 use tensorflow::{
     self as tf, DataType, Graph, Scope, Session, SessionOptions, SessionRunArgs, Shape, Tensor,
 };
-mod postpro;
-mod prepro;
 mod utils;
 use clap::{Arg, ArgMatches, Command};
-use utils::{func_stnd_ima, squeeze};
+use utils::{func_stnd_ima, load_nifti_3d, postprocess, squeeze};
 
 // const MODEL_INP_NAME: String = String::from("inp");
 // const MODEL_OUT_NAME: String = String::from("out");
 
 const MP2RAGE_MODEL: &str = "./model/tf_model_mp2rage";
+const MPRAGE_MODEL: &str = "./model/tf_model_mprage";
 const VAR_OUT_CHN: usize = 8;
 const TPL_INP_SHP: (usize, usize, usize) = (64, 64, 64);
 
@@ -45,13 +46,35 @@ fn interface() -> ArgMatches {
                 .help("Sets model running mode")
                 .value_parser(clap::value_parser!(String)),
         )
+        .arg(
+            Arg::new("type")
+                .long("type")
+                .short('t')
+                .default_value("mp2rage")
+                .value_name("FILE_TYPE")
+                .help("Sets model running type")
+                .value_parser(clap::value_parser!(String)),
+        )
         .get_matches();
     matches
 }
 
 fn main() {
+    // CONFIG
+
     let arg_matches: ArgMatches = interface();
     let run_mode: &str = arg_matches.get_one::<String>("mode").expect("").as_str();
+    let run_type: &str = arg_matches.get_one::<String>("type").expect("").as_str();
+
+    let model_dir: &str = match run_type {
+        "mp2rage" => MP2RAGE_MODEL,
+        "mprage" => MPRAGE_MODEL,
+        other => {
+            eprintln!("Error: '{}' is not a valid run type", other);
+            std::process::exit(1);
+        }
+    };
+
     let nifti_path_str: &str = arg_matches
         .get_one::<String>("input")
         .expect("input file path is required")
@@ -60,15 +83,18 @@ fn main() {
     let input_nifti_path = Path::new(&nifti_path_str).to_owned();
 
     let tpl_strides: (usize, usize, usize) = match run_mode {
-        "fast" => (64, 64, 32),
-        "slow" => (32, 32, 16),
-        _ => (32, 32, 16), // default to slow mode
+        "fast" => (64, 64, 64),
+        "slow" => (32, 32, 32),
+        other => {
+            eprintln!("Error: '{}' is not a valid run mode", other);
+            std::process::exit(1);
+        }
     };
 
     let (sx, sy, sz) = tpl_strides;
     let (px, py, pz) = TPL_INP_SHP;
 
-    let volume: Array3<f32> = prepro::load_nifti_3d(input_nifti_path.to_str().unwrap()).unwrap();
+    let volume: Array3<f32> = load_nifti_3d(input_nifti_path.to_str().unwrap()).unwrap();
     let (nx, ny, nz) = volume.dim();
 
     // Get Patches
@@ -76,6 +102,8 @@ fn main() {
     let ny_patches = (ny - py) / sy + 1;
     let nz_patches = (nz - pz) / sz + 1;
     let num_patches = nx_patches * ny_patches * nz_patches;
+
+    // CONFIG
 
     println!(
         "Input Nifti 3D Volume file has the shape {:?}",
@@ -131,25 +159,9 @@ fn main() {
     let patches_tensor: Tensor<f32> = run_args.fetch(patches_token).unwrap();
     let flat_patch_len = px * py * pz;
     assert_eq!(patches_tensor.len(), num_patches * flat_patch_len);
-    //let patches_array = Array::from(patches_tensor)
-    //    .to_shape((num_patches, flat_patch_len, 1))
-    //    .unwrap();
+
     let patches_array = Array::from(patches_tensor);
-    // println!("{:?}", patches_array.shape());
-    let patches_array = squeeze(patches_array.view()).to_owned();
-    // println!("{:?}", patches_array.shape());
-
-    // We’ll keep a view-by-index function: (ix,iy,iz) -> ArrayView3<f32> (px,py,pz)
-    let patches_flat = patches_array.into_raw_vec(); // back to a Vec<f32> we can index
-    let patch_storage = &patches_flat;
-
-    let patch_view = |idx: usize| -> ArrayView3<'_, f32> {
-        // patch idx in [0, num_patches)
-        let start = idx * flat_patch_len;
-        let end = start + flat_patch_len;
-        // create a view of shape (px, py, pz)
-        ArrayView3::from_shape((px, py, pz), &patch_storage[start..end]).unwrap()
-    };
+    println!("{:?}", patches_array.shape());
 
     // prepare output array
     let mut ary_out = Array4::<f32>::zeros((nx, ny, nz, VAR_OUT_CHN));
@@ -157,7 +169,6 @@ fn main() {
 
     // load model
     let mut model_graph = Graph::new();
-    let model_dir = String::from(MP2RAGE_MODEL);
     let bundle = tf::SavedModelBundle::load(
         &SessionOptions::new(),
         &["serve"],
@@ -179,7 +190,6 @@ fn main() {
     let out_len = px * py * pz * VAR_OUT_CHN;
 
     // debug
-
     for ixp in 0..nx_patches {
         let ind_x1 = ixp * sx;
         let ind_x2 = ind_x1 + px;
@@ -192,10 +202,15 @@ fn main() {
                 let ind_z1 = izp * sz;
                 let ind_z2 = ind_z1 + pz;
 
-                let patch_idx = ixp * (ny_patches * nz_patches) + iyp * nz_patches + izp;
-                println!("Working on patch {} out of {}", counter, num_patches);
+                let now = Instant::now();
+                print!("Working on patch {} out of {}", counter, num_patches);
 
-                let patch = patch_view(patch_idx);
+                let patch = patches_array
+                    .slice(s![0, ixp, iyp, izp, ..])
+                    .to_shape(TPL_INP_SHP)
+                    .unwrap()
+                    .to_owned();
+
                 let mut patch_tensor = Tensor::<f32>::new(&[1, px as u64, py as u64, pz as u64, 1]);
                 patch_tensor.copy_from_slice(patch.as_slice().unwrap());
 
@@ -209,31 +224,37 @@ fn main() {
                 let pred: Tensor<f32> = run_args.fetch(out_token).unwrap();
                 assert_eq!(pred.len(), out_len);
                 let pred_array = Array::from(pred);
-                let pred_view = squeeze(pred_array.view()).to_owned();
+                let pred_array = squeeze(pred_array.view()).to_owned();
 
                 {
                     let mut out_sub: ArrayViewMut4<f32> =
                         ary_out.slice_mut(s![ind_x1..ind_x2, ind_y1..ind_y2, ind_z1..ind_z2, ..]);
 
-                    out_sub += &pred_view;
+                    out_sub += &pred_array;
 
                     let mut cnt_sub =
                         ary_counter.slice_mut(s![ind_x1..ind_x2, ind_y1..ind_y2, ind_z1..ind_z2]);
+
                     cnt_sub += 1.0;
                 }
 
                 counter += 1;
+                println!(" took {} ms", now.elapsed().as_millis());
             }
         }
     }
 
-    //WriterOptions::new("./output/ary_out.nii.gz")
-    //    .write_nifti(&ary_out)
-    //    .unwrap();
-    //
-    //WriterOptions::new("./output/ary_counter.nii.gz")
-    //    .write_nifti(&ary_counter)
-    //    .unwrap();
+    let lgc_zeros = ary_counter.mapv(|x| if x.abs() < f32::EPSILON { 1.0 } else { 0.0 });
+    if lgc_zeros.sum() > 0.0 {
+        println!(
+            "!!!WARNING: Voxels were unvisitied!!! ',
+          'Change tpl_strides input (see WARNING messages above)"
+        )
+    }
+
+    let (ary_mean_prob_norm, ary_pred, ary_prob) = postprocess(ary_out, ary_counter);
+
+    // save results
 
     // Create a directory if not exit else skip
     match DirBuilder::new().create("./output") {
@@ -241,9 +262,6 @@ fn main() {
         Err(_e) => println!("LOG: output folder already exist, skip creation. "),
     }
 
-    let (ary_mean_prob_norm, ary_pred, ary_prob) = postpro::postprocess(ary_out, ary_counter);
-
-    // save results
     File::create("./output/data.nii.gz").unwrap();
     WriterOptions::new("./output/data.nii.gz")
         .write_nifti(&ary_data_x)
