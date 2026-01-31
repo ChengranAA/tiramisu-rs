@@ -21,6 +21,8 @@ const MP2RAGE_MODEL: &str = "./model/tf_model_mp2rage";
 const MPRAGE_MODEL: &str = "./model/tf_model_mprage";
 const VAR_OUT_CHN: usize = 8;
 const TPL_INP_SHP: (usize, usize, usize) = (64, 64, 64);
+const INPUT_OP_NAME: &str = "serving_default_inp";
+const OUTPUT_OP_NAME: &str = "StatefulPartitionedCall";
 
 // BUG: REGION MISSES IN FAST MODE
 
@@ -180,10 +182,10 @@ fn main() {
     let model_session = &bundle.session;
 
     let input_op = model_graph
-        .operation_by_name_required("serving_default_inp")
+        .operation_by_name_required(INPUT_OP_NAME)
         .unwrap();
     let output_op = model_graph
-        .operation_by_name_required("StatefulPartitionedCall")
+        .operation_by_name_required(OUTPUT_OP_NAME)
         .unwrap();
 
     let mut counter = 0;
