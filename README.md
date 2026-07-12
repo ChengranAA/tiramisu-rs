@@ -21,7 +21,7 @@ MPRAGE voxel-label agreement with the faithful ONNX model.
 
 ## Install
 
-Prebuilt archives for Linux x86-64, macOS Intel, and macOS Apple Silicon are
+Prebuilt archives for Linux x86-64 and macOS Apple Silicon are
 published on the GitHub Releases page. Each archive is self-contained and ships
 the executable, TensorFlow runtime libraries, and the complete `model/`
 directory. Extract an archive and run:

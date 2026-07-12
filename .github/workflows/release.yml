@@ -29,9 +29,6 @@ jobs:
           - os: ubuntu-24.04
             platform: linux-x86_64
             tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.18.0/libtensorflow-cpu-linux-x86_64.tar.gz
-          - os: macos-15-intel
-            platform: macos-x86_64
-            tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.16.2/libtensorflow-cpu-darwin-x86_64.tar.gz
           - os: macos-15
             platform: macos-aarch64
             tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.18.0/libtensorflow-cpu-darwin-arm64.tar.gz
