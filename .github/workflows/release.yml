@@ -57,6 +57,18 @@ jobs:
           curl --retry 3 --fail --silent --show-error --location \
             "${{ matrix.tensorflow_url }}" -o "$RUNNER_TEMP/libtensorflow.tar.gz"
           tar -xzf "$RUNNER_TEMP/libtensorflow.tar.gz" -C "$TF_ROOT"
+          mkdir -p "$TF_ROOT/lib/pkgconfig"
+          cat > "$TF_ROOT/lib/pkgconfig/tensorflow.pc" <<EOF
+          prefix=$TF_ROOT
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: TensorFlow
+          Description: TensorFlow C library
+          Version: 2.18.0
+          Libs: -L\${libdir} -ltensorflow
+          Cflags: -I\${includedir}
+          EOF
           echo "LIBRARY_PATH=$TF_ROOT/lib" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$TF_ROOT/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$TF_ROOT/lib" >> "$GITHUB_ENV"
