@@ -21,17 +21,33 @@ MPRAGE voxel-label agreement with the faithful ONNX model.
 
 ## Install
 
+Prebuilt archives for Linux x86-64, macOS Intel, and macOS Apple Silicon are
+published on the GitHub Releases page. Each archive is self-contained and ships
+the executable, TensorFlow runtime libraries, and the complete `model/`
+directory. Extract an archive and run:
+
+```bash
+./tiramisu-rs-*/bin/tiramisu-rs --help
+```
 
 ## Develop
-### Requirement:
-1. Rust tool chain: Cargo, Rustc ...
-2. libtensorflow:
-    * On Mac: `brew install libtensorflow`
+
+### Requirements
+
+1. Rust toolchain
+2. libtensorflow (`brew install libtensorflow` on macOS)
 
 ### Build
 ```{bash}
 cargo build
 ```
+
+## Release
+
+Push a version tag matching `Cargo.toml`, for example `v0.1.0`. GitHub Actions
+tests all supported platforms, packages the LFS-backed `model/` directory with
+each binary, generates SHA-256 checksum files, and publishes the GitHub Release
+automatically.
 
 ### Run
 

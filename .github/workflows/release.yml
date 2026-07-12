@@ -1,0 +1,155 @@
+name: CI and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.18.0/libtensorflow-cpu-linux-x86_64.tar.gz
+          - os: macos-15-intel
+            platform: macos-x86_64
+            tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.16.2/libtensorflow-cpu-darwin-x86_64.tar.gz
+          - os: macos-15
+            platform: macos-aarch64
+            tensorflow_url: https://storage.googleapis.com/tensorflow/versions/2.18.0/libtensorflow-cpu-darwin-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    env:
+      TF_ROOT: ${{ github.workspace }}/tensorflow
+    steps:
+      - name: Check out source and LFS models
+        uses: actions/checkout@v6
+        with:
+          lfs: ${{ github.ref_type == 'tag' }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install TensorFlow C runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TF_ROOT"
+          curl --retry 3 --fail --silent --show-error --location \
+            "${{ matrix.tensorflow_url }}" -o "$RUNNER_TEMP/libtensorflow.tar.gz"
+          tar -xzf "$RUNNER_TEMP/libtensorflow.tar.gz" -C "$TF_ROOT"
+          echo "LIBRARY_PATH=$TF_ROOT/lib" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$TF_ROOT/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$TF_ROOT/lib" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$TF_ROOT/lib" >> "$GITHUB_ENV"
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --release --locked -- -D warnings
+
+      - name: Test and build
+        run: cargo test --release --locked
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test "${GITHUB_REF_NAME#v}" = "$cargo_version"
+
+      - name: Package release
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RIl '^version https://git-lfs.github.com/spec/v1' model; then
+            echo "Model directory still contains Git LFS pointers" >&2
+            exit 1
+          fi
+
+          package="tiramisu-rs-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          root="dist/$package"
+          mkdir -p "$root/bin" "$root/lib"
+          cp target/release/tiramisu-rs "$root/bin/"
+          cp -R model "$root/model"
+          cp README.md LICENSE "$root/"
+
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes patchelf
+            cp -a "$TF_ROOT"/lib/libtensorflow.so* "$root/lib/"
+            patchelf --set-rpath '$ORIGIN/../lib' "$root/bin/tiramisu-rs"
+          else
+            cp -a "$TF_ROOT"/lib/libtensorflow*.dylib "$root/lib/"
+
+            patch_dependencies() {
+              local file=$1
+              local prefix=$2
+              while IFS= read -r dependency; do
+                install_name_tool -change "$dependency" \
+                  "$prefix/$(basename "$dependency")" "$file"
+              done < <(otool -L "$file" | tail -n +2 | awk '{print $1}' | grep 'libtensorflow.*\.dylib' || true)
+            }
+
+            patch_dependencies "$root/bin/tiramisu-rs" '@executable_path/../lib'
+            while IFS= read -r library; do
+              install_name_tool -id "@rpath/$(basename "$library")" "$library"
+              patch_dependencies "$library" '@loader_path'
+              codesign --force --sign - "$library"
+            done < <(find "$root/lib" -type f -name 'libtensorflow*.dylib')
+            codesign --force --sign - "$root/bin/tiramisu-rs"
+          fi
+
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$root/bin/tiramisu-rs" --help)
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          (cd dist && shasum -a 256 "$package.tar.gz" > "$package.tar.gz.sha256")
+
+      - name: Upload release archive
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
