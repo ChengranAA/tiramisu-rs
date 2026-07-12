@@ -42,13 +42,6 @@ directory. Extract an archive and run:
 cargo build
 ```
 
-## Release
-
-Push a version tag matching `Cargo.toml`, for example `v0.1.0`. GitHub Actions
-tests all supported platforms, packages the LFS-backed `model/` directory with
-each binary, generates SHA-256 checksum files, and publishes the GitHub Release
-automatically.
-
 ### Run
 
 ```bash
