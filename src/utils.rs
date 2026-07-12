@@ -1,4 +1,4 @@
-use ndarray::{Array, Array3, Array4, ArrayD, ArrayViewD, Axis, Ix3};
+use ndarray::{Array, Array3, Array4, ArrayD, ArrayViewD, Axis, Ix3, Zip, s};
 use nifti::{IntoNdArray, NiftiObject, ReaderOptions};
 
 pub fn load_nifti_3d(path: &str) -> Result<Array3<f32>, Box<dyn std::error::Error>> {
@@ -39,6 +39,45 @@ pub fn func_stnd_ima(ary_ima: &Array3<f32>) -> Array3<f32> {
     }
 }
 
+pub fn reframe_volume(
+    volume: &Array3<f32>,
+    patch: (usize, usize, usize),
+    stride: (usize, usize, usize),
+) -> (Array3<f32>, (usize, usize, usize)) {
+    fn framed_size(size: usize, patch: usize, stride: usize) -> usize {
+        if size <= patch {
+            patch
+        } else {
+            patch + (size - patch).div_ceil(stride) * stride
+        }
+    }
+
+    let (nx, ny, nz) = volume.dim();
+    let (px, py, pz) = patch;
+    let (sx, sy, sz) = stride;
+    let framed = (
+        framed_size(nx, px, sx),
+        framed_size(ny, py, sy),
+        framed_size(nz, pz, sz),
+    );
+    let offset = (
+        (framed.0 - nx) / 2,
+        (framed.1 - ny) / 2,
+        (framed.2 - nz) / 2,
+    );
+
+    let mut reframed = Array3::<f32>::zeros(framed);
+    reframed
+        .slice_mut(s![
+            offset.0..offset.0 + nx,
+            offset.1..offset.1 + ny,
+            offset.2..offset.2 + nz
+        ])
+        .assign(volume);
+
+    (reframed, offset)
+}
+
 pub fn postprocess(
     ary_out: Array4<f32>,     // (nx, ny, nz, C)
     ary_counter: Array3<f32>, // (nx, ny, nz)
@@ -60,27 +99,46 @@ pub fn postprocess(
     let mut ary_pred = Array3::<i32>::zeros((nx, ny, nz));
     let mut ary_prob = Array3::<f32>::zeros((nx, ny, nz));
 
-    for x in 0..nx {
-        for y in 0..ny {
-            for z in 0..nz {
-                let mut max_val = f32::MIN;
-                let mut max_idx = 0usize;
-                let mut sum = 0.0f32;
+    Zip::indexed(&mut ary_pred)
+        .and(&mut ary_prob)
+        .par_for_each(|(x, y, z), pred, prob| {
+            let mut max_val = f32::MIN;
+            let mut max_idx = 0usize;
+            let mut sum = 0.0f32;
 
-                for c in 0..n_channels {
-                    let v = ary_mean_prob[(x, y, z, c)];
-                    sum += v;
-                    if v > max_val {
-                        max_val = v;
-                        max_idx = c;
-                    }
+            for c in 0..n_channels {
+                let v = ary_mean_prob[(x, y, z, c)];
+                sum += v;
+                if v > max_val {
+                    max_val = v;
+                    max_idx = c;
                 }
-
-                ary_pred[(x, y, z)] = max_idx as i32;
-                ary_prob[(x, y, z)] = if sum > 0.0 { max_val / sum } else { 0.0 };
             }
-        }
-    }
+
+            *pred = max_idx as i32;
+            *prob = if sum > 0.0 { max_val / sum } else { 0.0 };
+        });
 
     (ary_mean_prob_norm, ary_pred, ary_prob)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reframes_and_centers_volume_on_patch_grid() {
+        let volume = Array3::from_elem((70, 80, 90), 1.0);
+        let (reframed, offset) = reframe_volume(&volume, (64, 64, 64), (32, 32, 32));
+
+        assert_eq!(reframed.dim(), (96, 96, 96));
+        assert_eq!(offset, (13, 8, 3));
+        assert_eq!(reframed[(0, 0, 0)], 0.0);
+        assert!(
+            reframed
+                .slice(s![13..83, 8..88, 3..93])
+                .iter()
+                .all(|&voxel| voxel == 1.0)
+        );
+    }
 }
