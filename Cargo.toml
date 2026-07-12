@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 tensorflow = { version = "0.21.0", features = ["ndarray"] }
 ort = { version = "=2.0.0-rc.12", features = ["coreml"] }
+burn = { version = "0.21.0", default-features = false, features = ["std", "wgpu", "fusion"] }
+burn-store = { version = "0.21.0", default-features = false, features = ["std", "burnpack"] }
 nifti = { version = "0.16.0", features = ["ndarray_volumes"] }
 ndarray = { version = "0.15.6", default-features = false, features = ["rayon"] }
 ndarray-stats = "0.5"
