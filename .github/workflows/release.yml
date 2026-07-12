@@ -80,8 +80,11 @@ jobs:
       - name: Lint
         run: cargo clippy --release --locked -- -D warnings
 
-      - name: Test and build
+      - name: Test
         run: cargo test --release --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
 
       - name: Validate release tag
         if: github.ref_type == 'tag'
@@ -103,6 +106,7 @@ jobs:
 
           package="tiramisu-rs-${GITHUB_REF_NAME}-${{ matrix.platform }}"
           root="dist/$package"
+          test -x target/release/tiramisu-rs
           mkdir -p "$root/bin" "$root/lib"
           cp target/release/tiramisu-rs "$root/bin/"
           cp -R model "$root/model"
