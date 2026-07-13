@@ -2,6 +2,7 @@ use burn::{
     backend::{Wgpu, wgpu::WgpuDevice},
     tensor::{Tensor as BurnTensor, TensorData},
 };
+use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array, Array3, Array4, ArrayD, ArrayViewMut4, s};
 use nifti::writer::WriterOptions;
 use ort::{session::Session as OnnxSession, value::Tensor as OnnxTensor};
@@ -10,7 +11,6 @@ use std::{
     fs::{DirBuilder, File},
     path::Path,
     string::String,
-    time::Instant,
 };
 use tensorflow::{Graph, Operation, SavedModelBundle, SessionOptions, SessionRunArgs, Tensor};
 mod models;
@@ -311,9 +311,17 @@ fn main() {
         }
     }
 
-    for (counter, &(ind_x1, ind_y1, ind_z1)) in patch_positions.iter().enumerate() {
-        let now = Instant::now();
-        print!("Working on patch {} out of {}", counter + 1, num_patches);
+    let progress = ProgressBar::new(num_patches as u64)
+        .with_style(
+            ProgressStyle::with_template(
+                "{msg} {spinner:.cyan} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {per_sec} ETA {eta_precise}",
+            )
+            .unwrap()
+            .progress_chars("━╸─"),
+        )
+        .with_message("Segmenting");
+
+    for &(ind_x1, ind_y1, ind_z1) in &patch_positions {
         let patch = inference_volume
             .slice(s![
                 ind_x1..ind_x1 + px,
@@ -338,8 +346,9 @@ fn main() {
                 ary_counter.slice_mut(s![ind_x1..ind_x2, ind_y1..ind_y2, ind_z1..ind_z2]);
             cnt_sub += 1.0;
         }
-        println!(" took {} ms", now.elapsed().as_millis());
+        progress.inc(1);
     }
+    progress.finish_with_message("Segmentation complete");
 
     let lgc_zeros = ary_counter.mapv(|x| if x.abs() < f32::EPSILON { 1.0 } else { 0.0 });
     if lgc_zeros.sum() > 0.0 {
