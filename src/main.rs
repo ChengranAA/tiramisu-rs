@@ -405,6 +405,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     #[ignore = "slow WGPU integration test"]
@@ -436,7 +437,17 @@ mod tests {
                 .into_owned();
 
             let mut backend = InferenceBackend::load(false, true, run_type, tf_model, onnx_model);
-            let output = backend.run(&patch);
+            let _warmup = backend.run(&patch);
+            let mut gpu_samples = Vec::with_capacity(3);
+            let mut output = None;
+            for _ in 0..3 {
+                let gpu_start = Instant::now();
+                output = Some(backend.run(&patch));
+                gpu_samples.push(gpu_start.elapsed().as_secs_f64() * 1_000.0);
+            }
+            gpu_samples.sort_by(f64::total_cmp);
+            let gpu_median_ms = gpu_samples[1];
+            let output = output.unwrap();
             let mut reference = OnnxSession::builder()
                 .unwrap()
                 .commit_from_file(onnx_model)
@@ -478,7 +489,8 @@ mod tests {
                 "{run_type}: max difference {max_difference}, label agreement {label_agreement:.4}"
             );
             println!(
-                "{run_type}: max difference {max_difference:.6}, label agreement {:.3}%",
+                "{run_type}: GPU inference {:.1} ms, max difference {max_difference:.6}, label agreement {:.3}%",
+                gpu_median_ms,
                 label_agreement * 100.0
             );
         }
